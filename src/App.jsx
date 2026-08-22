@@ -1,12 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { marked } from 'marked';
+import { db, auth } from './firebase';
+import { collection, onSnapshot, addDoc, updateDoc, deleteDoc, doc, query, orderBy, serverTimestamp } from 'firebase/firestore';
+import { onAuthStateChanged, signInAnonymously } from 'firebase/auth';
 
-// 1. Importa a conexão que você configurou no seu arquivo local
-import { db, auth } from './firebase'; 
-
-// 2. Importa apenas as funções necessárias do pacote do Firebase
-import { collection, onSnapshot, addDoc, updateDoc, deleteDoc, doc } from 'firebase/firestore';
-import { onAuthStateChanged } from 'firebase/auth';
 
 // ... (se houver ícones como lucide-react, eles entram aqui também) ...
 
