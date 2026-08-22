@@ -21,18 +21,6 @@ try {
   console.error("Failed to parse firebase config", e);
 }
 
-// Initialize Firebase only if we have a valid config
-let app, auth, db;
-if (Object.keys(firebaseConfig).length > 0) {
-    try {
-        app = initializeApp(firebaseConfig);
-        auth = getAuth(app);
-        db = getFirestore(app);
-    } catch(e) {
-        console.error("Firebase init error", e);
-    }
-}
-
 // ASCII Art Logo
 const ASCII_LOGO = `
     _    _  ____            _  _    ___  
