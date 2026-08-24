@@ -32,19 +32,27 @@ export default function Al3m40Terminal() {
     const [loadingNodes, setLoadingNodes] = useState(true);
     const [initializedDefault, setInitializedDefault] = useState(false);
 
-    // UI State for Folders (Collapsible)
+    // Command Palette / Global Search State (Item 4)
+    const [isPaletteOpen, setIsPaletteOpen] = useState(false);
+    const [paletteQuery, setPaletteQuery] = useState('');
+    const paletteInputRef = useRef(null);
+
+    // UI State for Folders
     const [collapsedFolders, setCollapsedFolders] = useState({});
 
     // Sidebar Resizing State
     const [sidebarWidth, setSidebarWidth] = useState(260);
     const [isResizing, setIsResizing] = useState(false);
 
-    // UI State
+    // Editor UI State
     const [isEditing, setIsEditing] = useState(false);
     const [editContent, setEditContent] = useState('');
     const [editTitle, setEditTitle] = useState('');
     const [linkError, setLinkError] = useState('');
     const textareaRef = useRef(null);
+
+    // File Import Reference (Item 6)
+    const fileInputRef = useRef(null);
 
     // Prompt UI
     const [showPrompt, setShowPrompt] = useState(false);
@@ -53,7 +61,66 @@ export default function Al3m40Terminal() {
     const [promptParentId, setPromptParentId] = useState(null);
     const promptInputRef = useRef(null);
 
-    // Sidebar Resize Handlers
+    // --- Dynamic JSZip Loader (Item 6) ---
+    const loadJSZip = () => {
+        return new Promise((resolve, reject) => {
+            if (window.JSZip) return resolve(window.JSZip);
+            const script = document.createElement('script');
+            script.src = 'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js';
+            script.onload = () => resolve(window.JSZip);
+            script.onerror = () => reject(new Error('Falha ao carregar JSZip'));
+            document.head.appendChild(script);
+        });
+    };
+
+    // --- Hotkeys Handler (Item 7) ---
+    useEffect(() => {
+        const handleGlobalKeyDown = (e) => {
+            const isCtrl = e.ctrlKey || e.metaKey;
+            const key = e.key.toLowerCase();
+
+            // Ctrl + K: Command Palette
+            if (isCtrl && key === 'k') {
+                e.preventDefault();
+                setIsPaletteOpen(prev => !prev);
+                setPaletteQuery('');
+            }
+
+            // Ctrl + S: Salvar nota ativa
+            if (isCtrl && key === 's') {
+                e.preventDefault();
+                if (isEditing && activeItem) {
+                    saveCurrentEdit();
+                }
+            }
+
+            // Ctrl + E: Alternar Edição/Visualização
+            if (isCtrl && key === 'e') {
+                e.preventDefault();
+                if (activeItem && activeItem.type === 'file') {
+                    setIsEditing(prev => !prev);
+                }
+            }
+
+            // Esc: Fechar Modais / Cancelar
+            if (e.key === 'Escape') {
+                if (isPaletteOpen) setIsPaletteOpen(false);
+                if (showPrompt) setShowPrompt(false);
+            }
+        };
+
+        window.addEventListener('keydown', handleGlobalKeyDown);
+        return () => window.removeEventListener('keydown', handleGlobalKeyDown);
+    }, [isPaletteOpen, showPrompt, isEditing, activeItem, editContent, editTitle]);
+
+    // Focus input da Palette ao abrir
+    useEffect(() => {
+        if (isPaletteOpen && paletteInputRef.current) {
+            paletteInputRef.current.focus();
+        }
+    }, [isPaletteOpen]);
+
+    // Handler de Redimensionamento da Sidebar
     useEffect(() => {
         const handleMouseMove = (e) => {
             if (!isResizing) return;
@@ -63,9 +130,7 @@ export default function Al3m40Terminal() {
             }
         };
 
-        const handleMouseUp = () => {
-            setIsResizing(false);
-        };
+        const handleMouseUp = () => setIsResizing(false);
 
         if (isResizing) {
             window.addEventListener('mousemove', handleMouseMove);
@@ -97,7 +162,7 @@ export default function Al3m40Terminal() {
         return () => unsubscribe();
     }, []);
 
-    // Listener de Nodes do Firestore baseados no usuário logado
+    // Listener de Nodes do Firestore
     useEffect(() => {
         if (!user || !db) return;
 
@@ -111,7 +176,7 @@ export default function Al3m40Terminal() {
                 ...doc.data()
             }));
             setItems(fetchedItems);
-            setLoadingNodes(false); // Só desativa o carregamento após o Firestore responder
+            setLoadingNodes(false);
         }, (error) => {
             console.error("Error fetching nodes:", error);
             setLoadingNodes(false);
@@ -120,7 +185,7 @@ export default function Al3m40Terminal() {
         return () => unsubscribe();
     }, [user]);
 
-    // Criar arquivo home.md padrão APENAS após o carregamento do Firestore terminar e não existir nenhum home.md
+    // Criar arquivo home.md padrão se zerado
     useEffect(() => {
         if (loadingNodes || !user || !db || initializedDefault) return;
 
@@ -134,13 +199,13 @@ export default function Al3m40Terminal() {
             }
             setInitializedDefault(true);
         } else if (items.length === 0) {
-            setInitializedDefault(true); // Trava re-trigges imediatos
+            setInitializedDefault(true);
             const createHomeFile = async () => {
                 const defaultNode = {
                     name: 'home.md',
                     type: 'file',
                     parentId: null,
-                    content: `# Bem-vindo ao Al3m40 Terminal 🚀\n\nEste é o seu sistema de base de conhecimento pessoal sincronizado na nuvem.\n\n## Funcionalidades:\n- **Colar Imagens**: Cole prints direto com \`Ctrl+V\` no editor!\n- **Multi-dispositivo**: Suas notas agora seguem você em qualquer lugar.\n\nComece criando novas pastas ou editando este documento!`,
+                    content: `# Bem-vindo ao Al3m40 Terminal 🚀\n\n### Atalhos Rápidos:\n- \`Ctrl + K\` : Busca Global (Command Palette)\n- \`Ctrl + S\` : Salvar Nota\n- \`Ctrl + E\` : Alternar Modo de Edição\n\nCole imagens com \`Ctrl + V\` diretamente no editor!`,
                     createdAt: serverTimestamp(),
                     updatedAt: serverTimestamp()
                 };
@@ -158,7 +223,7 @@ export default function Al3m40Terminal() {
         }
     }, [loadingNodes, items, user, initializedDefault, activeItem]);
 
-    // Tratar Autenticação (Login / Cadastro)
+    // Auth Submission
     const handleAuthSubmit = async (e) => {
         e.preventDefault();
         setAuthError('');
@@ -175,15 +240,7 @@ export default function Al3m40Terminal() {
             }
         } catch (error) {
             console.error("Erro de Auth:", error);
-            if (error.code === 'auth/invalid-credential' || error.code === 'auth/user-not-found' || error.code === 'auth/wrong-password') {
-                setAuthError('E-mail ou senha incorretos.');
-            } else if (error.code === 'auth/email-already-in-use') {
-                setAuthError('Este e-mail já está cadastrado.');
-            } else if (error.code === 'auth/weak-password') {
-                setAuthError('A senha deve ter pelo menos 6 caracteres.');
-            } else {
-                setAuthError('Erro na autenticação: ' + error.message);
-            }
+            setAuthError('Erro de autenticação: ' + error.message);
         }
     };
 
@@ -199,7 +256,7 @@ export default function Al3m40Terminal() {
         }
     };
 
-    // Tratar colagem de imagens no Textarea
+    // Colagem de imagens (Base64 local sem Storage)
     const handlePaste = (e) => {
         const itemsList = e.clipboardData.items;
         for (let i = 0; i < itemsList.length; i++) {
@@ -278,7 +335,7 @@ export default function Al3m40Terminal() {
         const homeFilesCount = items.filter(item => item.type === 'file' && item.name.toLowerCase() === 'home.md').length;
 
         if (parentId === null && itemName && itemName.toLowerCase() === 'home.md' && homeFilesCount <= 1) {
-            alert("O arquivo home.md principal é protegido e não pode ser excluído enquanto for o único.");
+            alert("O arquivo home.md principal é protegido e não pode ser excluído.");
             return;
         }
 
@@ -301,22 +358,125 @@ export default function Al3m40Terminal() {
         }
     };
 
+    // --- Exportar & Importar em ZIP (Item 6) ---
+    const getItemPath = (itemId) => {
+        const itemMap = new Map(items.map(i => [i.id, i]));
+        const parts = [];
+        let current = itemMap.get(itemId);
+        while (current) {
+            parts.unshift(current.name);
+            current = current.parentId ? itemMap.get(current.parentId) : null;
+        }
+        return parts.join('/');
+    };
+
+    const handleExportZIP = async () => {
+        try {
+            const JSZip = await loadJSZip();
+            const zip = new JSZip();
+
+            items.forEach(item => {
+                const path = getItemPath(item.id);
+                if (item.type === 'folder') {
+                    zip.folder(path);
+                } else {
+                    zip.file(path, item.content || '');
+                }
+            });
+
+            const content = await zip.generateAsync({ type: 'blob' });
+            const url = URL.createObjectURL(content);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `al3m40_terminal_backup_${new Date().toISOString().slice(0, 10)}.zip`;
+            a.click();
+            URL.revokeObjectURL(url);
+        } catch (err) {
+            console.error("Erro ao exportar ZIP:", err);
+            alert("Erro ao gerar arquivo ZIP de backup.");
+        }
+    };
+
+    const handleImportFile = async (e) => {
+        const file = e.target.files?.[0];
+        if (!file || !user || !db) return;
+
+        try {
+            if (file.name.endsWith('.zip')) {
+                const JSZip = await loadJSZip();
+                const zip = await JSZip.loadAsync(file);
+                const pathIdMap = new Map();
+
+                const entries = Object.keys(zip.files).sort((a, b) => a.split('/').length - b.split('/').length);
+
+                for (const relativePath of entries) {
+                    const zipEntry = zip.files[relativePath];
+                    const cleanPath = relativePath.replace(/\/$/, '');
+                    if (!cleanPath) continue;
+
+                    const parts = cleanPath.split('/');
+                    const name = parts[parts.length - 1];
+                    const parentPath = parts.slice(0, -1).join('/');
+                    const parentId = parentPath ? pathIdMap.get(parentPath) || null : null;
+
+                    if (zipEntry.dir) {
+                        const newNode = {
+                            name: name,
+                            type: 'folder',
+                            parentId: parentId,
+                            createdAt: serverTimestamp(),
+                            updatedAt: serverTimestamp()
+                        };
+                        const newDocRef = doc(collection(db, 'artifacts', appId, 'users', user.uid, 'nodes'));
+                        await setDoc(newDocRef, newNode);
+                        pathIdMap.set(cleanPath, newDocRef.id);
+                    } else {
+                        const content = await zipEntry.async('string');
+                        const newNode = {
+                            name: name,
+                            type: 'file',
+                            parentId: parentId,
+                            content: content,
+                            createdAt: serverTimestamp(),
+                            updatedAt: serverTimestamp()
+                        };
+                        const newDocRef = doc(collection(db, 'artifacts', appId, 'users', user.uid, 'nodes'));
+                        await setDoc(newDocRef, newNode);
+                        pathIdMap.set(cleanPath, newDocRef.id);
+                    }
+                }
+                alert('Importação do arquivo ZIP concluída com sucesso!');
+            } else if (file.name.endsWith('.md') || file.name.endsWith('.txt')) {
+                const text = await file.text();
+                const newNode = {
+                    name: file.name,
+                    type: 'file',
+                    parentId: activeItem?.type === 'folder' ? activeItem.id : null,
+                    content: text,
+                    createdAt: serverTimestamp(),
+                    updatedAt: serverTimestamp()
+                };
+                const newDocRef = doc(collection(db, 'artifacts', appId, 'users', user.uid, 'nodes'));
+                await setDoc(newDocRef, newNode);
+                alert(`Arquivo ${file.name} importado!`);
+            }
+        } catch (err) {
+            console.error("Erro ao importar arquivo:", err);
+            alert("Erro durante a importação do arquivo.");
+        } finally {
+            if (fileInputRef.current) fileInputRef.current.value = '';
+        }
+    };
+
     const toggleFolder = (folderId, e) => {
         if (e) e.stopPropagation();
-        setCollapsedFolders(prev => ({
-            ...prev,
-            [folderId]: !prev[folderId]
-        }));
+        setCollapsedFolders(prev => ({ ...prev, [folderId]: !prev[folderId] }));
     };
 
     const saveCurrentEdit = () => {
         if (activeItem) {
             const finalTitle = (activeItem.parentId === null && activeItem.name.toLowerCase() === 'home.md') ? 'home.md' : editTitle;
-
-            handleUpdateNode(activeItem.id, {
-                name: finalTitle,
-                content: editContent
-            });
+            handleUpdateNode(activeItem.id, { name: finalTitle, content: editContent });
             setActiveItem({ ...activeItem, name: finalTitle, content: editContent });
             setIsEditing(false);
         }
@@ -327,9 +487,7 @@ export default function Al3m40Terminal() {
         setPromptParentId(parentId);
         setPromptInput('');
         setShowPrompt(true);
-        setTimeout(() => {
-            if (promptInputRef.current) promptInputRef.current.focus();
-        }, 50);
+        setTimeout(() => { if (promptInputRef.current) promptInputRef.current.focus(); }, 50);
     };
 
     const handlePromptSubmit = (e) => {
@@ -340,11 +498,12 @@ export default function Al3m40Terminal() {
         setShowPrompt(false);
     };
 
-    const handlePromptKeyDown = (e) => {
-        if (e.key === 'Escape') {
-            setShowPrompt(false);
-        }
-    };
+    // Command Palette Filter
+    const filteredPaletteItems = items.filter(item => {
+        if (!paletteQuery.trim()) return true;
+        const q = paletteQuery.toLowerCase();
+        return item.name.toLowerCase().includes(q) || (item.type === 'file' && item.content?.toLowerCase().includes(q));
+    });
 
     const renderTree = (parentId = null, depth = 0) => {
         const children = items.filter(item => item.parentId === parentId);
@@ -386,14 +545,10 @@ export default function Al3m40Terminal() {
                         <div className="flex items-center gap-1.5 flex-grow overflow-hidden pr-2">
                             {item.type === 'folder' ? (
                                 <>
-                                    <span
-                                        onClick={(e) => toggleFolder(item.id, e)}
-                                        className="text-gray-500 hover:text-cyan-300 font-mono text-[10px] w-4 text-center shrink-0 select-none"
-                                        title={isCollapsed ? "Expandir" : "Recolher"}
-                                    >
+                                    <span onClick={(e) => toggleFolder(item.id, e)} className="text-gray-500 hover:text-cyan-300 font-mono text-[10px] w-4 text-center shrink-0 select-none">
                                         {isCollapsed ? '▶' : '▼'}
                                     </span>
-                                    <svg className="w-4 h-4 text-purple-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"></path></svg>
+                                    <svg className="w-4 h-4 text-purple-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 01-2 2z"></path></svg>
                                 </>
                             ) : (
                                 <svg className="w-4 h-4 text-cyan-400 shrink-0 ml-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
@@ -401,7 +556,6 @@ export default function Al3m40Terminal() {
                             <span className="truncate font-mono text-sm">{item.name}</span>
                         </div>
 
-                        {/* Ações e Botão Excluir */}
                         <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity items-center shrink-0">
                             {item.type === 'folder' && (
                                 <>
@@ -413,11 +567,7 @@ export default function Al3m40Terminal() {
                                     </button>
                                 </>
                             )}
-                            <button 
-                                onClick={(e) => { e.stopPropagation(); handleDeleteNode(item.id, item.type === 'folder', item.name, item.parentId); }} 
-                                className="text-red-400 hover:text-red-300 hover:bg-red-900/30 p-1 rounded transition-colors" 
-                                title={`Excluir ${item.name}`}
-                            >
+                            <button onClick={(e) => { e.stopPropagation(); handleDeleteNode(item.id, item.type === 'folder', item.name, item.parentId); }} className="text-red-400 hover:text-red-300 hover:bg-red-900/30 p-1 rounded transition-colors" title={`Excluir ${item.name}`}>
                                 <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
                             </button>
                         </div>
@@ -429,69 +579,22 @@ export default function Al3m40Terminal() {
         });
     };
 
-    if (authLoading) {
-        return <div className="min-h-screen bg-black text-cyan-500 flex items-center justify-center font-mono">Iniciando sistema...</div>;
-    }
+    if (authLoading) return <div className="min-h-screen bg-black text-cyan-500 flex items-center justify-center font-mono">Iniciando sistema...</div>;
 
     if (!user) {
         return (
-            <div className="min-h-screen bg-black text-cyan-500 flex flex-col items-center justify-center font-mono p-4 selection:bg-purple-500/30">
-                <pre className="text-cyan-400 font-bold leading-none text-[8px] sm:text-[10px] md:text-xs text-center overflow-hidden mb-6 drop-shadow-[0_0_8px_rgba(34,211,238,0.6)] animate-pulse">
-                    {ASCII_LOGO}
-                </pre>
-
-                <div className="w-full max-w-md bg-gray-950 border border-purple-900/50 p-6 rounded-lg shadow-[0_0_20px_rgba(168,85,247,0.15)]">
-                    <h2 className="text-purple-400 text-sm font-bold mb-4 uppercase tracking-widest text-center">
-                        {isRegistering ? 'root@al3m40:~# signup' : 'root@al3m40:~# login'}
-                    </h2>
-
-                    {authError && (
-                        <div className="bg-red-950/80 border border-red-800 text-red-300 p-2 text-xs mb-4 rounded text-center">
-                            {authError}
-                        </div>
-                    )}
-
+            <div className="min-h-screen bg-black text-cyan-500 flex flex-col items-center justify-center font-mono p-4">
+                <pre className="text-cyan-400 font-bold leading-none text-[8px] sm:text-[10px] md:text-xs text-center mb-6 animate-pulse">{ASCII_LOGO}</pre>
+                <div className="w-full max-w-md bg-gray-950 border border-purple-900/50 p-6 rounded-lg">
+                    <h2 className="text-purple-400 text-sm font-bold mb-4 uppercase text-center">{isRegistering ? 'root@al3m40:~# signup' : 'root@al3m40:~# login'}</h2>
+                    {authError && <div className="bg-red-950/80 border border-red-800 text-red-300 p-2 text-xs mb-4 rounded text-center">{authError}</div>}
                     <form onSubmit={handleAuthSubmit} className="flex flex-col gap-4">
-                        <div>
-                            <label className="block text-xs text-gray-400 mb-1">E-mail</label>
-                            <input
-                                type="email"
-                                value={emailInput}
-                                onChange={(e) => setEmailInput(e.target.value)}
-                                className="w-full bg-black text-cyan-300 border border-cyan-900/60 rounded px-3 py-2 outline-none focus:border-cyan-400 text-sm font-mono"
-                                placeholder="seu@email.com"
-                                required
-                            />
-                        </div>
-
-                        <div>
-                            <label className="block text-xs text-gray-400 mb-1">Senha</label>
-                            <input
-                                type="password"
-                                value={passwordInput}
-                                onChange={(e) => setPasswordInput(e.target.value)}
-                                className="w-full bg-black text-cyan-300 border border-cyan-900/60 rounded px-3 py-2 outline-none focus:border-cyan-400 text-sm font-mono"
-                                placeholder="******"
-                                required
-                            />
-                        </div>
-
-                        <button
-                            type="submit"
-                            className="mt-2 bg-purple-900/50 hover:bg-purple-800 text-purple-200 py-2 rounded border border-purple-700/50 transition-colors text-xs uppercase font-bold tracking-wider"
-                        >
-                            {isRegistering ? '[ Criar Conta ]' : '[ Entrar no Terminal ]'}
-                        </button>
+                        <input type="email" value={emailInput} onChange={(e) => setEmailInput(e.target.value)} className="bg-black text-cyan-300 border border-cyan-900/60 rounded px-3 py-2 text-sm font-mono" placeholder="seu@email.com" required />
+                        <input type="password" value={passwordInput} onChange={(e) => setPasswordInput(e.target.value)} className="bg-black text-cyan-300 border border-cyan-900/60 rounded px-3 py-2 text-sm font-mono" placeholder="******" required />
+                        <button type="submit" className="bg-purple-900/50 hover:bg-purple-800 text-purple-200 py-2 rounded border border-purple-700/50 text-xs uppercase font-bold">{isRegistering ? '[ Criar Conta ]' : '[ Entrar no Terminal ]'}</button>
                     </form>
-
                     <div className="mt-4 text-center">
-                        <button
-                            type="button"
-                            onClick={() => { setIsRegistering(!isRegistering); setAuthError(''); }}
-                            className="text-xs text-gray-500 hover:text-cyan-400 transition-colors underline"
-                        >
-                            {isRegistering ? 'Já tem uma conta? Faça login' : 'Não tem conta? Cadastre-se'}
-                        </button>
+                        <button onClick={() => { setIsRegistering(!isRegistering); setAuthError(''); }} className="text-xs text-gray-500 hover:text-cyan-400 underline">{isRegistering ? 'Já tem conta? Faça login' : 'Não tem conta? Cadastre-se'}</button>
                     </div>
                 </div>
             </div>
@@ -499,96 +602,119 @@ export default function Al3m40Terminal() {
     }
 
     return (
-        <div className="min-h-screen bg-gray-950 text-gray-300 font-mono flex flex-col overflow-hidden selection:bg-purple-500/30">
+        <div className="min-h-screen bg-gray-950 text-gray-300 font-mono flex flex-col overflow-hidden">
             <style dangerouslySetInnerHTML={{
                 __html: `
             ::-webkit-scrollbar { width: 8px; height: 8px; }
             ::-webkit-scrollbar-track { background: #0a0a0a; border-left: 1px solid #1a1a1a; }
             ::-webkit-scrollbar-thumb { background: #2d3748; border-radius: 4px; }
             ::-webkit-scrollbar-thumb:hover { background: #4a5568; }
-            
             .markdown-body h1, .markdown-body h2, .markdown-body h3 { color: #c084fc; margin-top: 1em; margin-bottom: 0.5em; }
             .markdown-body h1 { font-size: 2em; border-bottom: 1px solid #3b0764; padding-bottom: 0.2em; }
             .markdown-body p { margin-bottom: 1em; line-height: 1.6; }
             .markdown-body a { color: #22d3ee; text-decoration: underline; cursor: pointer; }
             .markdown-body code { background: #171717; padding: 0.2em 0.4em; border-radius: 3px; color: #f472b6; font-family: monospace; }
             .markdown-body pre { background: #0a0a0a; padding: 1em; border-radius: 6px; overflow-x: auto; border: 1px solid #1f2937; margin-bottom: 1em; }
-            .markdown-body pre code { background: transparent; padding: 0; color: #a78bfa; }
             .markdown-body ul, .markdown-body ol { margin-left: 2em; margin-bottom: 1em; }
-            .markdown-body li { margin-bottom: 0.25em; }
-            .markdown-body blockquote { border-left: 4px solid #4c1d95; padding-left: 1em; color: #9ca3af; font-style: italic; }
-            
-            .markdown-body img { max-width: 100%; height: auto; border-radius: 6px; border: 1px solid #1f2937; margin: 1em 0; cursor: pointer; }
-            .markdown-body img:hover { border-color: #22d3ee; }
+            .markdown-body img { max-width: 100%; height: auto; border-radius: 6px; border: 1px solid #1f2937; margin: 1em 0; }
         `}} />
 
-            <header className="border-b border-purple-900/50 bg-black/85 backdrop-blur-md p-6 flex flex-col items-center shrink-0 shadow-[0_0_15px_rgba(168,85,247,0.15)] relative z-10">
-                <pre className="text-cyan-400 font-bold leading-none text-[8px] sm:text-[10px] md:text-xs text-center overflow-hidden mx-4 max-w-full drop-shadow-[0_0_8px_rgba(34,211,238,0.6)] animate-pulse">
-                    {ASCII_LOGO}
-                </pre>
-                <div className="flex gap-6 mt-4 text-xs font-bold uppercase tracking-widest text-purple-400 items-center">
-                    <span className="hover:text-cyan-300 cursor-pointer transition-colors">Root</span>
-                    <span className="hover:text-cyan-300 cursor-pointer transition-colors">Knowledge_Base</span>
-                    <span className="text-gray-600">|</span>
-                    <span className="text-gray-500 lowercase">user: {user?.email}</span>
-                    <button
-                        onClick={handleLogout}
-                        className="text-red-400 hover:text-red-300 ml-2 border border-red-900/60 px-2 py-0.5 rounded text-[10px] transition-colors"
-                        title="Sair da Conta"
-                    >
-                        [ sair ]
+            {/* Input oculto de arquivo (Item 6) */}
+            <input type="file" ref={fileInputRef} onChange={handleImportFile} accept=".zip,.md,.txt" className="hidden" />
+
+            {/* MODAL COMMAND PALETTE (Item 4) */}
+            {isPaletteOpen && (
+                <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-start justify-center pt-20 px-4" onClick={() => setIsPaletteOpen(false)}>
+                    <div className="bg-gray-950 border border-cyan-500/60 w-full max-w-xl rounded-lg shadow-[0_0_30px_rgba(34,211,238,0.25)] overflow-hidden" onClick={e => e.stopPropagation()}>
+                        <div className="flex items-center border-b border-gray-800 px-3 py-2 bg-gray-900/60">
+                            <span className="text-cyan-400 font-mono text-sm mr-2 font-bold">{'>'}</span>
+                            <input
+                                ref={paletteInputRef}
+                                type="text"
+                                value={paletteQuery}
+                                onChange={(e) => setPaletteQuery(e.target.value)}
+                                placeholder="Buscar arquivos por título ou conteúdo... (Esc para fechar)"
+                                className="w-full bg-transparent text-cyan-300 font-mono text-sm outline-none placeholder-gray-600"
+                            />
+                        </div>
+                        <div className="max-h-80 overflow-y-auto p-2 divide-y divide-gray-900">
+                            {filteredPaletteItems.length === 0 ? (
+                                <div className="p-4 text-center text-gray-600 font-mono text-xs">Nenhum resultado encontrado.</div>
+                            ) : (
+                                filteredPaletteItems.map(item => (
+                                    <div
+                                        key={item.id}
+                                        onClick={() => {
+                                            if (item.type === 'file') {
+                                                setActiveItem(item);
+                                                setEditContent(item.content);
+                                                setEditTitle(item.name);
+                                                setIsEditing(false);
+                                            } else {
+                                                setActiveItem(item);
+                                            }
+                                            setIsPaletteOpen(false);
+                                        }}
+                                        className="p-2.5 hover:bg-cyan-950/40 cursor-pointer rounded transition-colors flex items-center justify-between group"
+                                    >
+                                        <div className="flex items-center gap-2 overflow-hidden">
+                                            <span className={`font-mono text-xs shrink-0 ${item.type === 'folder' ? 'text-purple-400' : 'text-cyan-400'}`}>
+                                                [{item.type === 'folder' ? 'DIR' : 'FILE'}]
+                                            </span>
+                                            <span className="text-gray-200 font-mono text-sm truncate group-hover:text-cyan-300">{item.name}</span>
+                                        </div>
+                                        <span className="text-[10px] text-gray-600 font-mono shrink-0">Abrir →</span>
+                                    </div>
+                                ))
+                            )}
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            <header className="border-b border-purple-900/50 bg-black/85 p-4 flex flex-col items-center shrink-0">
+                <pre className="text-cyan-400 font-bold leading-none text-[8px] sm:text-[10px] md:text-xs text-center animate-pulse">{ASCII_LOGO}</pre>
+                <div className="flex flex-wrap justify-center gap-3 mt-3 text-xs font-bold uppercase tracking-widest text-purple-400 items-center">
+                    <span>Root</span>
+                    <span>Knowledge_Base</span>
+                    
+                    {/* Botões de Ação */}
+                    <button onClick={() => setIsPaletteOpen(true)} className="bg-cyan-950/80 border border-cyan-800 hover:border-cyan-400 text-cyan-300 px-2 py-0.5 rounded text-[10px] flex items-center gap-1 transition-colors">
+                        Busca (Ctrl+K)
                     </button>
+                    <button onClick={handleExportZIP} className="bg-purple-950/80 border border-purple-800 hover:border-purple-400 text-purple-300 px-2 py-0.5 rounded text-[10px] transition-colors" title="Exportar Backup ZIP">
+                        [ Exportar ZIP ]
+                    </button>
+                    <button onClick={() => fileInputRef.current?.click()} className="bg-purple-950/80 border border-purple-800 hover:border-purple-400 text-purple-300 px-2 py-0.5 rounded text-[10px] transition-colors" title="Importar ZIP ou Markdown">
+                        [ Importar ]
+                    </button>
+                    <button onClick={handleLogout} className="text-red-400 border border-red-900/60 px-2 py-0.5 rounded text-[10px] hover:bg-red-950/40">[ sair ]</button>
                 </div>
             </header>
 
             <div className="flex flex-1 overflow-hidden relative">
-                <aside
-                    style={{ width: `${sidebarWidth}px` }}
-                    className="border-r border-cyan-900/30 bg-gray-950/80 flex flex-col shrink-0 relative select-none"
-                >
+                <aside style={{ width: `${sidebarWidth}px` }} className="border-r border-cyan-900/30 bg-gray-950/80 flex flex-col shrink-0 relative select-none">
                     <div className="p-3 border-b border-cyan-900/30 flex justify-between items-center bg-gray-900/50">
                         <span className="text-xs text-cyan-600 uppercase font-bold tracking-wider truncate">/fs/root</span>
-                        <div className="flex gap-2 shrink-0">
-                            <button onClick={() => openPrompt('folder')} className="text-purple-400 hover:text-purple-300 hover:bg-purple-900/30 p-1 rounded transition-colors" title="Nova Pasta Raiz">
-                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 13h6m-3-3v6m-9 1V7a2 2 0 012-2h6l2 2h6a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z"></path></svg>
-                            </button>
-                            <button onClick={() => openPrompt('file')} className="text-cyan-400 hover:text-cyan-300 hover:bg-cyan-900/30 p-1 rounded transition-colors" title="Novo Artigo Raiz">
-                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 13h6m-3-3v6m5 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
-                            </button>
+                        <div className="flex gap-2">
+                            <button onClick={() => openPrompt('folder')} className="text-purple-400 p-1 hover:text-purple-300" title="Nova Pasta"><svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 13h6m-3-3v6m-9 1V7a2 2 0 012-2h6l2 2h6a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z"></path></svg></button>
+                            <button onClick={() => openPrompt('file')} className="text-cyan-400 p-1 hover:text-cyan-300" title="Novo Artigo"><svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 13h6m-3-3v6m5 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg></button>
                         </div>
                     </div>
-
                     <div className="flex-1 overflow-y-auto p-2">
-                        {loadingNodes ? (
-                            <div className="text-gray-600 text-xs italic text-center mt-4">Sincronizando nós...</div>
-                        ) : (
-                            renderTree()
-                        )}
+                        {loadingNodes ? <div className="text-gray-600 text-xs italic text-center mt-4">Sincronizando...</div> : renderTree()}
                     </div>
-
-                    <div
-                        onMouseDown={() => setIsResizing(true)}
-                        className={`absolute top-0 right-0 w-1.5 h-full cursor-col-resize transition-colors z-30 ${isResizing ? 'bg-cyan-500 shadow-[0_0_8px_rgba(34,211,238,0.8)]' : 'hover:bg-cyan-500/50'}`}
-                        title="Arraste para redimensionar"
-                    />
+                    <div onMouseDown={() => setIsResizing(true)} className="absolute top-0 right-0 w-1.5 h-full cursor-col-resize hover:bg-cyan-500/50" />
                 </aside>
 
-                <main className="flex-1 flex flex-col bg-[#050505] relative shadow-inner overflow-hidden">
+                <main className="flex-1 flex flex-col bg-[#050505] overflow-hidden">
                     {showPrompt && (
-                        <div className="absolute top-0 left-0 right-0 bg-blue-900/90 border-b border-cyan-500 p-2 z-20 flex items-center shadow-[0_4px_20px_rgba(34,211,238,0.2)] backdrop-blur-sm">
-                            <span className="text-cyan-300 mr-2 text-xs">Criar {promptType === 'folder' ? 'Pasta' : 'Artigo'}:</span>
+                        <div className="bg-blue-900/90 border-b border-cyan-500 p-2 flex items-center gap-2">
+                            <span className="text-cyan-300 text-xs">Criar {promptType === 'folder' ? 'Pasta' : 'Artigo'}:</span>
                             <form onSubmit={handlePromptSubmit} className="flex-1 flex gap-2">
-                                <input
-                                    ref={promptInputRef}
-                                    type="text"
-                                    value={promptInput}
-                                    onChange={(e) => setPromptInput(e.target.value)}
-                                    onKeyDown={handlePromptKeyDown}
-                                    className="flex-1 bg-black/50 text-white border border-cyan-700/50 rounded px-2 py-1 outline-none focus:border-cyan-400 font-mono text-sm"
-                                    placeholder={`Nome d${promptType === 'folder' ? 'a pasta' : 'o arquivo.md'}...`}
-                                />
-                                <button type="submit" className="bg-cyan-800/80 hover:bg-cyan-700 text-cyan-100 px-3 py-1 text-xs rounded border border-cyan-600 transition-colors">Criar</button>
-                                <button type="button" onClick={() => setShowPrompt(false)} className="bg-gray-800 hover:bg-gray-700 text-gray-300 px-3 py-1 text-xs rounded border border-gray-600 transition-colors">Cancelar</button>
+                                <input ref={promptInputRef} type="text" value={promptInput} onChange={(e) => setPromptInput(e.target.value)} className="flex-1 bg-black/50 text-white border border-cyan-700/50 rounded px-2 py-1 font-mono text-sm outline-none" />
+                                <button type="submit" className="bg-cyan-800 text-cyan-100 px-3 py-1 text-xs rounded">Criar</button>
+                                <button type="button" onClick={() => setShowPrompt(false)} className="bg-gray-800 text-gray-300 px-3 py-1 text-xs rounded">Cancelar</button>
                             </form>
                         </div>
                     )}
@@ -596,110 +722,49 @@ export default function Al3m40Terminal() {
                     {activeItem ? (
                         activeItem.type === 'file' ? (
                             <div className="flex-1 flex flex-col h-full overflow-hidden">
-                                <div className="bg-gray-900/80 border-b border-purple-900/30 p-2 flex justify-between items-center shrink-0">
-                                    <div className="flex items-center gap-2 overflow-hidden pr-2">
-                                        <span className="text-purple-500 font-bold shrink-0">root@al3m40:~#</span>
-                                        {isEditing && !(activeItem.parentId === null && activeItem.name.toLowerCase() === 'home.md') ? (
-                                            <input
-                                                value={editTitle}
-                                                onChange={(e) => setEditTitle(e.target.value)}
-                                                className="bg-black/50 text-cyan-300 border-b border-cyan-700 outline-none px-1 font-mono text-sm"
-                                            />
-                                        ) : (
-                                            <span className="text-cyan-300 text-sm truncate">cat {activeItem.name}</span>
-                                        )}
+                                <div className="bg-gray-900/80 border-b border-purple-900/30 p-2 flex justify-between items-center">
+                                    <div className="flex items-center gap-2">
+                                        <span className="text-purple-500 font-bold">root@al3m40:~#</span>
+                                        {isEditing ? <input value={editTitle} onChange={(e) => setEditTitle(e.target.value)} className="bg-black/50 text-cyan-300 border-b border-cyan-700 font-mono text-sm outline-none px-1" /> : <span className="text-cyan-300 text-sm">cat {activeItem.name}</span>}
                                     </div>
-                                    <div className="shrink-0">
+                                    <div className="flex items-center gap-2">
                                         {isEditing ? (
                                             <button onClick={saveCurrentEdit} className="text-xs bg-purple-900/50 hover:bg-purple-800 text-purple-200 px-3 py-1 rounded border border-purple-700/50 transition-colors">
-                                                [ Salvar ]
+                                                [ Salvar (Ctrl+S) ]
                                             </button>
                                         ) : (
                                             <button onClick={() => setIsEditing(true)} className="text-xs bg-cyan-900/50 hover:bg-cyan-800 text-cyan-200 px-3 py-1 rounded border border-cyan-700/50 transition-colors">
-                                                [ Editar ]
+                                                [ Editar (Ctrl+E) ]
                                             </button>
                                         )}
                                     </div>
                                 </div>
-
-                                {linkError && (
-                                    <div className="bg-red-950/80 border-b border-red-800 text-red-300 px-4 py-2 text-xs flex justify-between items-center">
-                                        <span>⚠️ {linkError}</span>
-                                        <button onClick={() => setLinkError('')} className="text-red-400 hover:text-red-200 font-bold">×</button>
-                                    </div>
-                                )}
-
-                                <div className="flex-1 overflow-y-auto p-6 relative">
+                                <div className="flex-1 overflow-y-auto p-6">
                                     {isEditing ? (
-                                        <textarea
-                                            ref={textareaRef}
-                                            value={editContent}
-                                            onChange={(e) => setEditContent(e.target.value)}
-                                            onPaste={handlePaste}
-                                            className="w-full h-full min-h-[500px] bg-transparent text-gray-300 font-mono resize-none outline-none p-0 text-sm"
-                                            spellCheck="false"
-                                            placeholder="# Digite seu Markdown ou cole imagens com Ctrl+V..."
-                                        />
+                                        <textarea ref={textareaRef} value={editContent} onChange={(e) => setEditContent(e.target.value)} onPaste={handlePaste} className="w-full h-full min-h-[500px] bg-transparent text-gray-300 font-mono resize-none outline-none text-sm" spellCheck="false" placeholder="# Digite seu Markdown ou cole imagens com Ctrl+V..." />
                                     ) : (
-                                        <div
-                                            className="markdown-body text-gray-300 overflow-y-auto"
-                                            dangerouslySetInnerHTML={{ __html: marked(activeItem?.content || '') }}
-                                            onClick={(e) => {
-                                                const link = e.target.closest('a');
-                                                if (!link) return;
-
-                                                const href = link.getAttribute('href');
-                                                if (href && href.startsWith('#')) {
-                                                    e.preventDefault();
-                                                    const targetName = decodeURIComponent(href.substring(1)).trim();
-
-                                                    const foundItem = items.find(
-                                                        n => n.type === 'file' && n.name.trim().toLowerCase() === targetName.toLowerCase()
-                                                    );
-
-                                                    if (foundItem) {
-                                                        setActiveItem(foundItem);
-                                                        setEditContent(foundItem.content);
-                                                        setEditTitle(foundItem.name);
-                                                        setLinkError('');
-                                                    } else {
-                                                        setLinkError(`Arquivo "${targetName}" não encontrado no sistema de arquivos.`);
-                                                    }
-                                                }
-                                            }}
-                                        />
+                                        <div className="markdown-body text-gray-300" dangerouslySetInnerHTML={{ __html: marked(activeItem?.content || '') }} />
                                     )}
                                 </div>
                             </div>
                         ) : (
-                            <div className="flex-1 flex flex-col items-center justify-center text-gray-500 p-8 text-center">
-                                <svg className="w-16 h-16 text-purple-900/50 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 01-2 2z"></path></svg>
-                                <p className="text-lg text-purple-400 mb-2">Diretório: {activeItem.name}</p>
-                                <p className="text-sm">Selecione um arquivo lateral ou crie um novo aqui dentro.</p>
-                                <div className="flex gap-2 mt-4">
-                                    <button onClick={() => openPrompt('folder', activeItem.id)} className="text-xs bg-purple-900/30 hover:bg-purple-900/50 text-purple-400 px-3 py-2 rounded border border-purple-800/50 transition-colors flex items-center gap-1.5">
-                                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 13h6m-3-3v6m-9 1V7a2 2 0 012-2h6l2 2h6a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z"></path></svg>
-                                        Subpasta
-                                    </button>
-                                    <button onClick={() => openPrompt('file', activeItem.id)} className="text-xs bg-cyan-900/30 hover:bg-cyan-900/50 text-cyan-400 px-3 py-2 rounded border border-cyan-800/50 transition-colors flex items-center gap-1.5">
-                                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 13h6m-3-3v6m5 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
-                                        Arquivo
-                                    </button>
-                                </div>
+                            <div className="flex-1 flex flex-col items-center justify-center text-gray-500">
+                                <p className="text-purple-400 mb-2">Diretório: {activeItem.name}</p>
+                                <p className="text-sm">Selecione um arquivo ou crie um novo item.</p>
                             </div>
                         )
                     ) : (
                         <div className="flex-1 flex flex-col items-center justify-center text-gray-600">
-                            <div className="text-4xl text-cyan-900/30 mb-4 animate-pulse">{'>_'}</div>
                             <p>Terminal Aguardando Input...</p>
-                            <p className="text-xs mt-2 text-gray-700">Selecione um nó no sistema de arquivos à esquerda.</p>
                         </div>
                     )}
                 </main>
             </div>
-
-            <footer className="bg-black/90 border-t border-cyan-900/30 p-1 text-center shrink-0">
-                <span className="text-[10px] text-gray-600">2026 - Al3m40 Knowledge Sys - Protected by Firebase Auth</span>
+            <footer className="bg-black/90 border-t border-cyan-900/30 p-1.5 text-center shrink-0 flex justify-center gap-4 text-[10px] text-gray-500 font-mono">
+                <span>[Ctrl + K] Busca</span>
+                <span>[Ctrl + S] Salvar</span>
+                <span>[Ctrl + E] Editar</span>
+                <span>[Esc] Fechar</span>
             </footer>
         </div>
     );
